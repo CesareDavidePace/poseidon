@@ -80,7 +80,7 @@ TRAIN:
 VAL:
   ANNOT_DIR: "./Poseidon/dataPosetrack18/annotations/val"
   COCO_BBOX_FILE: './Poseidon/dataPosetrack18/detections/val_boxes.json'
-  USE_GT_BBOX: true  
+  USE_GT_BBOX: false  
   BBOX_THRE: 1.0
   IMAGE_THRE: 0.2
   IN_VIS_THRE: 0.2
