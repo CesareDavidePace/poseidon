@@ -325,7 +325,7 @@ def main():
 
     print("→ Using device:", device)
 
-    model = Poseidon(cfg, phase="test", device=device)
+    model = Poseidon(cfg, phase="test", device=device, inference=True)
     ckpt = torch.load(args.weights, map_location=device)
     model.load_state_dict(ckpt["model_state_dict"])
     model.to(device).eval()

@@ -150,21 +150,80 @@ dataPosetrack21/
 
 The pretrained weights for ViTPose can be downloaded from the [MMPose Model Zoo](https://mmpose.readthedocs.io/en/latest/model_zoo/body_2d_keypoint.html). Pretrained models must be placed in the models/vitpose/ folder.
 
-## Usage
+## Poseidon Weights & Reproduction Guide
 
-For training and validation, refer to the config files present in the configs folder. Remember to check all the paths in the config file.
+Trained Poseidon checkpoints are available on Google Drive:
+<https://drive.google.com/drive/folders/1i7UwEF45bnwTMO8bwD3UForeb45-bEaX?usp=share_link>
+
+The table below maps each reported result to the exact config and checkpoint needed to reproduce it. All models use a temporal window of **5 frames** (`WINDOWS_SIZE: 5`) and ground-truth boxes on the validation set (`USE_GT_BBOX: true`). **Before running, edit the dataset paths (`DATASET.JSON_DIR`, `DATASET.IMG_DIR`, `VAL.ANNOT_DIR`, ...) in the config to point to your local data.** The `configs/best*` folders contain the configurations used for the paper.
+
+| Paper result | Config | Checkpoint |
+|---|---|---|
+| PoseTrack21, ViT-H (mAP 88.3, main result) | `configs/bestposetrack21/configPoseidonVitH.yaml` | `vith_model.pt` |
+| PoseTrack21, ViT-B (mAP 84.6) | `configs/bestposetrack21/configPoseidonVitB.yaml` | `vitb_model.pt` |
+| PoseTrack21, ViT-S (mAP 81.7) | `configs/bestposetrack21/configPoseidonVitS.yaml` | `vits_model.pt` |
+| PoseTrack18, ViT-H (mAP 87.8) | `configs/bestposetrack18/configPoseidonVitH.yaml` | `vith_model_posetrack18.pt` |
+| Sub-JHMDB (mean PCK 97.3, no fine-tuning) | `configs/bestJHMDB/split{1,2,3}/configPoseidonVitH.yaml` | `vith_model.pt` (PoseTrack21 model, tested directly) |
+
+> The ViT-L configuration (`configs/bestposetrack21/configPoseidonVitL.yaml`) is provided so the model can be retrained; its checkpoint is not part of the release.
+
+Place the downloaded checkpoints under `models/` (or pass their path via `--weights_path` / `-w`).
+
+
+## Usage
+Use the configs in the `configs/best*` folders (these reproduce the paper — see the Reproduction Guide above). **Remember to set the dataset paths inside the chosen config file** before running.
 
 ### Training
 
 ```bash
-python train.py --config /path/to/config/config.yaml
+python train.py --config configs/bestposetrack21/configPoseidonVitH.yaml
 ```
 
 ### Validation
 
 ```bash
-python val.py --config /path/to/config/config.yaml --weights_path /path/to/weights.pt
+python val.py --config configs/bestposetrack21/configPoseidonVitH.yaml --weights_path models/vith_model.pt
 ```
+
+### AFW frame-weight diagnostics
+
+The diagnostic script visualizes the five learned AFW coefficients on a shared,
+zero-based scale with the uniform `1/T` reference. It also exports the exact
+values to CSV:
+
+```bash
+python visualize_frame_weights.py \
+  --config configs/bestposetrack21/configPoseidonVitH.yaml \
+  --weights models/vith_model.pt \
+  --data-root /path/to/PoseTrack21 \
+  --frames 5 \
+  --images \
+    images/val/020031_mpii_test/000075.jpg \
+    images/val/003943_mpii_test/000044.jpg \
+    images/val/018896_mpii_test/000062.jpg \
+  --labels "Wrist sequence" "Elbow sequence" "Knee sequence" \
+  --out output/appendix_frame_weights.png
+```
+
+The batch-one qualitative comparison in Appendix B can be reproduced with:
+
+```bash
+python qualitative_comparison.py \
+  --config configs/bestposetrack21/configPoseidonVitH.yaml \
+  --weights models/vith_model.pt \
+  --data-root /path/to/PoseTrack21 \
+  --images \
+    images/val/020031_mpii_test/000075.jpg \
+    images/val/018896_mpii_test/000062.jpg \
+    images/val/023754_mpii_test/000102.jpg \
+  --joints 9 13 9 \
+  --labels "Wrist success" "Knee success" "Occlusion failure" \
+  --out output/appendix_comparison.png
+```
+
+This figure uses independently applied COCO-pretrained ViTPose as a qualitative
+per-frame reference. The controlled single-frame comparison is the ablation
+reported in the paper.
 
 ### Inference  🚀 *(early-stage — contributions welcome!)*
 
@@ -226,21 +285,21 @@ mim install "mmpretrain==1.2.0"
    `mim download mmpose --config td-hm_ViTPose-huge_8xb64-210e_coco-256x192 --dest ./models/vitpose`
     The destination folder should be models/vitpose
 
-3. **Download the pre-trained Poseidon weights**:  [**Link**](https://drive.google.com/drive/folders/1i7UwEF45bnwTMO8bwD3UForeb45-bEaX?usp=sharing)
-This google drive link is for the weights of the ViTPose model. Download all three models in the folder: `models/vitpose`
+3. **Download the pre-trained Poseidon weights**:  
+   <https://drive.google.com/drive/folders/1i7UwEF45bnwTMO8bwD3UForeb45-bEaX?usp=share_link>
 
 4. **Run inference** — the script automatically performs *person detection* with **YOLO v8-s** (this version is hard-coded in the script, but you can swap in other YOLO models if you wish):
 
    ```bash
    python inference.py \
-          -c configs/posetrack21/vith_test.yaml \
-          -w models/poseidon_vith.pt \
+          -c configs/bestposetrack21/configPoseidonVitH.yaml \
+          -w models/vith_model.pt \
           -i input/sample_video.mp4 \
           -o output/sample_annotated.mp4 \
           --window 5 \
           --step 1 \
-          --coco_json results/sample_keypoints.json \
-          --gpu 0
+          --gpu 0 \
+          --coco_json results/sample_keypoints.json
     ```
 
 ## Citations

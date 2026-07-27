@@ -41,13 +41,16 @@ import os.path as osp
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 
+import shutil 
+
 import torch.nn.functional as F
 from torchvision.transforms import functional as TF
 
 def check_file_and_read(img_file):
     if not osp.exists(img_file):
         error_msg = f"Can not find image: {img_file}"
-        self.logger.error(error_msg)
+        logger = logging.getLogger(__name__)
+        logger.error(error_msg)
         raise Exception(error_msg)
     return read_image_pil(img_file)
 
@@ -392,8 +395,6 @@ class PoseTrack(VideoDataset):
         x = torch.stack([input_prev, input_x, input_next], dim=1)
 
         return x, meta, target_heatmaps, target_heatmaps_weight
-
-        #return input_prev, input_x, input_next, meta, target_heatmaps, target_heatmaps_weight
     
     def _get_spatiotemporal_window_multi_aug(self, data_item):
 
@@ -1069,6 +1070,13 @@ class PoseTrack(VideoDataset):
         # AP = self._run_eval(annot_dir, output_dir)[0]
         AP = evaluate_simple.evaluate(annot_dir, output_dir, eval_track=False, dataset_name=self.dataset_name)[0]
         
+        # Calculate and save per-image mAP for validation set
+        if self.phase == 'validate':
+            per_image_map = self._calculate_per_image_map(annot_dir, output_dir, img_path)
+            per_image_map_file = osp.join(output_dir, 'per_image_map.json')
+            write_json_to_file(per_image_map, per_image_map_file)
+            logger.info(f"=> Per-image mAP saved to: {per_image_map_file}")
+        
         if self.dataset_name == "posetrack":
             name_value = [
                 ('Head', AP[0]),
@@ -1087,3 +1095,130 @@ class PoseTrack(VideoDataset):
 
         else:
             return AP, AP["Mean"]
+
+    def _calculate_per_image_map(self, annot_dir, output_dir, img_path):
+        """
+        Calculate mAP for each individual image in the validation set.
+        
+        Args:
+            annot_dir: Directory containing ground truth annotations
+            output_dir: Directory containing prediction results
+            img_path: Dictionary mapping image paths to prediction indices
+            
+        Returns:
+            dict: Dictionary containing per-image mAP results
+        """
+        logger = logging.getLogger(__name__)
+        logger.info("=> Calculating per-image mAP")
+        
+        from .posetrack_utils.poseval.py.evaluateAP import evaluateAP
+        from .posetrack_utils.poseval.py.eval_helpers import load_data_dir
+        
+        # Load all ground truth and prediction data
+        if self.dataset_name == "posetrack":
+            gtFramesAll, prFramesAll = load_data_dir(['', annot_dir, output_dir])
+        else:
+            from .posetrack_utils.poseval.py.evaluate_simple import load_data_dir_jhmdb
+            gtFramesAll, prFramesAll = load_data_dir_jhmdb(['', annot_dir, output_dir])
+        
+        # Create dictionaries for fast lookup
+        gt_frames_dict = {}
+        for frame in gtFramesAll:
+            image_name = frame['image'][0]['name'] if isinstance(frame['image'], list) else frame['image']['name']
+            if image_name not in gt_frames_dict:
+                gt_frames_dict[image_name] = []
+            gt_frames_dict[image_name].append(frame)
+        
+        pr_frames_dict = {}
+        for frame in prFramesAll:
+            image_name = frame['image'][0]['name'] if isinstance(frame['image'], list) else frame['image']['name']
+            if image_name not in pr_frames_dict:
+                pr_frames_dict[image_name] = []
+            pr_frames_dict[image_name].append(frame)
+        
+        per_image_results = {}
+        
+        # Calculate mAP for each image
+        for img_key in img_path:
+            # Extract image filename from path
+            img_filename = '/'.join(img_key.split('/')[-3:])  # Get the relative path format
+            
+            # Find corresponding ground truth and prediction frames
+            gt_frames_img = gt_frames_dict.get(img_filename, [])
+            pr_frames_img = pr_frames_dict.get(img_filename, [])
+            
+            if len(gt_frames_img) == 0:
+                logger.warning(f"No ground truth found for image: {img_filename}")
+                continue
+                
+            if len(pr_frames_img) == 0:
+                logger.warning(f"No predictions found for image: {img_filename}")
+                per_image_results[img_key] = {
+                    'image_path': img_key,
+                    'mAP': 0.0,
+                    'joint_APs': [0.0] * self.num_joints,
+                    'has_predictions': False
+                }
+                continue
+            
+            # Calculate AP for this specific image
+            try:
+                if self.dataset_name == "posetrack":
+                    apImg, _, _ = evaluateAP(gt_frames_img, pr_frames_img)
+                    joint_aps = [float(ap) if not np.isnan(ap) else 0.0 for ap in apImg[:, 0]]
+                    mean_ap = np.nanmean(apImg[:, 0]) if len(apImg) > 0 else 0.0
+                    mean_ap = float(mean_ap) if not np.isnan(mean_ap) else 0.0
+                else:
+                    # For JHMDB, use PCK metric instead
+                    keypoint_names = [
+                        "neck", "belly", "head", "left_ear", "right_ear",
+                        "right_shoulder", "left_shoulder", "right_hip", "left_hip",
+                        "right_elbow", "left_elbow", "right_knee", "left_knee",
+                        "right_wrist", "left_wrist", "right_ankle", "left_ankle"
+                    ]
+                    from .posetrack_utils.poseval.py.evaluate_simple import calculate_pck
+                    pck_results = calculate_pck(gt_frames_img, pr_frames_img, keypoint_names, threshold=0.05)
+                    joint_aps = list(pck_results.values())[:-1]  # Exclude 'Mean' value
+                    mean_ap = pck_results.get('Mean', 0.0)
+                
+                per_image_results[img_key] = {
+                    'image_path': img_key,
+                    'mAP': mean_ap,
+                    'joint_APs': joint_aps,
+                    'has_predictions': True,
+                    'num_gt_poses': len(gt_frames_img),
+                    'num_pred_poses': len(pr_frames_img)
+                }
+                
+            except Exception as e:
+                logger.error(f"Error calculating mAP for image {img_filename}: {str(e)}")
+                per_image_results[img_key] = {
+                    'image_path': img_key,
+                    'mAP': 0.0,
+                    'joint_APs': [0.0] * self.num_joints,
+                    'has_predictions': False,
+                    'error': str(e)
+                }
+        
+        # Add summary statistics
+        valid_maps = [result['mAP'] for result in per_image_results.values() 
+                     if result.get('has_predictions', False) and result['mAP'] > 0]
+        
+        summary = {
+            'total_images': len(per_image_results),
+            'images_with_predictions': len([r for r in per_image_results.values() if r.get('has_predictions', False)]),
+            'mean_mAP': np.mean(valid_maps) if valid_maps else 0.0,
+            'std_mAP': np.std(valid_maps) if valid_maps else 0.0,
+            'min_mAP': np.min(valid_maps) if valid_maps else 0.0,
+            'max_mAP': np.max(valid_maps) if valid_maps else 0.0,
+            'dataset_name': self.dataset_name
+        }
+        
+        result = {
+            'summary': summary,
+            'per_image_results': per_image_results
+        }
+        
+        logger.info(f"=> Per-image mAP calculation completed. Mean mAP: {summary['mean_mAP']:.4f}")
+        
+        return result

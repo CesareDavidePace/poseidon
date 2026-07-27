@@ -20,10 +20,30 @@ venv.bak/
 
 # VS Code settings
 .vscode/
-
+/home/pace/Poseidon/paper
+/home/pace/Poseidon/paper/images
 # Docker files
 docker-compose.yml
 Dockerfile
+
+# Paper sources and final revision artifacts
+paper/*
+!paper/manuscript-rev1.tex
+!paper/response-to-reviewers.tex
+!paper/bib.bib
+!paper/manuscript-rev1.bbl
+!paper/manuscript-rev1.pdf
+!paper/response-to-reviewers.pdf
+!paper/images/
+paper/images/*
+!paper/images/schema_model.pdf
+!paper/images/vis_example.pdf
+!paper/images/appendix_trajectory.png
+!paper/images/appendix_trajectory_elbow.png
+!paper/images/appendix_trajectory_knee.png
+!paper/images/appendix_frame_weights.png
+!paper/images/appendix_frame_weights.csv
+!paper/images/appendix_comparison.png
 
 # Data files
 data/
@@ -38,6 +58,7 @@ checkpoints/
 *.ckpt
 *.pth
 *.pt
+*.log
 
 # TensorBoard and WandB logs
 logs/
@@ -67,13 +88,6 @@ dataPosetrack18/
 dataPosetrack21/
 data/
 input/
-
-#config
-configs/bestJHMDB/
-configs/bestposetrack18/
-configs/bestposetrack21/
-
-
 
 # out files
 *.out
@@ -105,8 +119,41 @@ train_copy.py
 
 
 PROVA/
+inference_old.py
+check_version.py
+datasets/zoo/posetrack/PoseTrack copy.py
+inference_frames.py
+inference_frames_filtered.py
+video_to_frames.py
+qualitative_cases.py
+
+# Local media, generated predictions, and qualitative outputs
+giphy.gif
+giphy.mp4
+sample/
+paper_frames/
+output*/
+predictions*.json
+configs/bestJHMDB/*/configPoseidonVitS.yaml
 
 models/model_tmp
 models/best/PoseidonHeatMapVitPoseAttention12_vith_dropout_best_no_adaptive.py
 models/best/PoseidonHeatMapVitPoseAttention12_vith_dropout_best_no_multi_fusion.py
 .DS_Store
+
+# Keep the numerical source of the paper's AFW figure despite the global CSV rule.
+!paper/images/appendix_frame_weights.csv
+paper/manuscript-rev1.tex
+paper/bib.bib
+paper/manuscript-rev1.bbl
+paper/manuscript-rev1.pdf
+paper/response-to-reviewers.pdf
+paper/response-to-reviewers.tex
+paper/images/appendix_comparison.png
+paper/images/appendix_frame_weights.csv
+paper/images/appendix_frame_weights.png
+paper/images/appendix_trajectory_elbow.png
+paper/images/appendix_trajectory_knee.png
+paper/images/appendix_trajectory.png
+paper/images/schema_model.pdf
+paper/images/vis_example.pdf

@@ -1,0 +1,91 @@
+PRINT_FREQ: 20
+DISTANCE: 2
+WORKERS: 16
+WINDOWS_SIZE: 5
+GPUS: [3]
+SAVE_RESULTS: true
+EARLY_STOPPING:
+  PATIENCE: 8
+NAME_EXP: 'PoseidonHeatMapVitPoseAttention12_vith_dropout_best  Vit H heads=4 5 frames Posetrack18'
+
+DATASET:
+  NAME: "posetrack"
+  JSON_DIR: "/home/pace/Poseidon/dataPosetrack18/jsons"
+  IMG_DIR: "/ssd2/Pace/data"
+  TEST_IMG_DIR: "/ssd2/Pace/data"
+  IS_POSETRACK18: true
+  COLOR_RGB: true
+  DATASET: 'posetrack'
+  ROOT: ''
+  INPUT_TYPE: 'spatiotemporal_window'
+  BBOX_ENLARGE_FACTOR: 1.25
+
+LOSS:
+  NAME: 'JointsMSELoss' # 'JointsMSELoss' or 'JointsMSELossWithSiga' or 'PoseidonLoss'
+  USE_TARGET_WEIGHT: true
+  
+MODEL: 
+  METHOD: 'poseidon' # 'poseidon' or 'simplebaseline' or 'hrnet'
+  CONFIG_FILE: '/home/pace/Poseidon/models/vitpose/td-hm_ViTPose-huge_8xb64-210e_coco-256x192.py'
+  CHECKPOINT_FILE: '/home/pace/Poseidon/models/vitpose/td-hm_ViTPose-huge_8xb64-210e_coco-256x192-e32adcd4_20230314.pth'
+  FREEZE_HRNET_WEIGHTS: false
+  EVALUATE: true
+  INIT_WEIGHTS: true
+  BACKBONE: resnet152 # resnet50, resnet101, resnet152, resnet34, hrnet-w30, hrnet-w32, hrnet-w48
+  FREEZE_BACKBONE: false
+  NUM_JOINTS: 17
+  PRETRAINED: ''
+  TARGET_TYPE: gaussian
+  EMBED_DIM: 1280 # 384, 768, 1280
+  IMAGE_SIZE:
+  # - 192
+  #  - 256
+    - 288
+    - 384
+  HEATMAP_SIZE:
+    - 72 
+    - 96
+  #  - 48
+  #  - 64
+  SIGMA: 3
+  USE_RECTIFIER: true
+
+TRAIN:
+  BATCH_SIZE: 16
+  ACCUMULATION_STEPS: 1
+  FLIP: true
+  NUM_JOINTS_HALF_BODY: 8
+  PROB_HALF_BODY: 0.3
+  ROT_FACTOR: 45
+  SCALE_FACTOR: [0.35, 0.35]
+  SHUFFLE: true
+  BEGIN_EPOCH: 0
+  END_EPOCH: 30
+  OPTIMIZER: adamw
+  LR: 0.000005 #0.00001
+  BACKBONE_LR: 0.000005 # 0.000005
+  WEIGHT_DECAY: 0.1
+  BETAS: [0.9, 0.999]
+  GAMMA: 0.99
+  LR_SCHEDULER: "StepLR" # StepLR or CosineAnnealingLR
+  LR_STEP: 5
+  LR_FACTOR: 0.5
+  NESTEROV: false
+  MOTION_AUGMENTATION: false
+
+  AUTO_RESUME: false
+  AUTO_RESUME_PATH: '' # path to the checkpoint
+  EXPERIMENT_DIR: '' # path to the experiment directory
+
+VAL:
+  ANNOT_DIR: "/home/pace/Poseidon/dataPosetrack18/annotations/val"
+  COCO_BBOX_FILE: '/home/pace/Poseidon/dataPosetrack18/detections/val_boxes.json'
+  USE_GT_BBOX: true  
+  BBOX_THRE: 1.0
+  IMAGE_THRE: 0.2
+  IN_VIS_THRE: 0.2
+  NMS_THRE: 1.0
+  OKS_THRE: 0.9
+  FLIP_VAL: true
+  POST_PROCESS: true
+  BATCH_SIZE: 16

@@ -22,7 +22,7 @@ class AdaptiveFrameWeighting(nn.Module):
         super(AdaptiveFrameWeighting, self).__init__()
         self.embed_dim = embed_dim
         self.num_frames = num_frames
-        
+
         self.frame_quality_estimator = nn.Sequential(
             nn.Conv2d(embed_dim, 64, kernel_size=3, padding=1),
             nn.ReLU(),
@@ -34,11 +34,11 @@ class AdaptiveFrameWeighting(nn.Module):
     def forward(self, x):
         # x shape: [batch_size, num_frames, embed_dim, height, width]
         batch_size, num_frames, embed_dim, height, width = x.shape
-        
+
         # Estimate quality for each frame
         x_reshaped = x.view(batch_size * num_frames, embed_dim, height, width)
         quality_scores = self.frame_quality_estimator(x_reshaped).view(batch_size, num_frames)
-        
+
         # Normalize scores
         weights = F.softmax(quality_scores, dim=1).unsqueeze(2).unsqueeze(3).unsqueeze(4)
         
@@ -180,18 +180,23 @@ class CrossAttention(nn.Module):
         return attn_output
 
 class Poseidon(nn.Module):
-    def __init__(self, cfg, device='cpu', phase='train', num_heads=4):
+    def __init__(self, cfg, device='cpu', phase='train', num_heads=4, inference=False):
         super(Poseidon, self).__init__()
         
         self.device = device
+        self.inference = inference
 
         self.model = init_model(cfg.MODEL.CONFIG_FILE, cfg.MODEL.CHECKPOINT_FILE, device=device)
         self.backbone = self.model.backbone
 
         if cfg.MODEL.EMBED_DIM == 384:
-            self.return_layers = {'layers.3': 'layer3', 'layers.7': 'layer7'} # VIT S, VIT B
+            self.return_layers = {'layers.3': 'layer3', 'layers.7': 'layer7'} # VIT S
+        elif cfg.MODEL.EMBED_DIM == 768:
+            self.return_layers = {'layers.3': 'layer3', 'layers.7': 'layer7'} # VIT B (12 layers)
+        elif cfg.MODEL.EMBED_DIM == 1024:
+            self.return_layers = {'layers.9': 'layer9', 'layers.21': 'layer21'} # VIT L (24 layers)
         elif cfg.MODEL.EMBED_DIM == 1280:
-            self.return_layers = {'layers.9': 'layer9', 'layers.21': 'layer21'}
+            self.return_layers = {'layers.9': 'layer9', 'layers.21': 'layer21'} # VIT H (32 layers)
 
         #self.return_layers = {'layers.7': 'layer7','layers.15':'layers15', 'layers.23': 'layers23'}
         #self.return_layers = {'layers.9': 'layer9', 'layer.21': 'layer21',} # VIT H
@@ -202,18 +207,19 @@ class Poseidon(nn.Module):
         self.deconv_layer = self.model.head.deconv_layers
         self.final_layer = self.model.head.final_layer
         self.num_frames = cfg.WINDOWS_SIZE
-   
-        # Scongelamento parziale del backbone
-        if cfg.MODEL.FREEZE_WEIGHTS:
-            for param in self.backbone.parameters():
-                param.requires_grad = False
-            for layer in self.backbone.layers[-12:]:
-                for param in layer.parameters():
-                    param.requires_grad = True
-            for param in self.backbone.ln1.parameters():
-                param.requires_grad = True
-                
 
+        if not self.inference:
+            # Scongelamento parziale del backbone
+            # check if there is a freeze_weights parameter in the config
+            if hasattr(cfg.MODEL, 'FREEZE_WEIGHTS') and cfg.MODEL.FREEZE_WEIGHTS:
+                for param in self.backbone.parameters():
+                    param.requires_grad = False
+                for layer in self.backbone.layers[-12:]:
+                    for param in layer.parameters():
+                        param.requires_grad = True
+                for param in self.backbone.ln1.parameters():
+                    param.requires_grad = True
+                
         # Get heatmap size
         self.heatmap_size = cfg.MODEL.HEATMAP_SIZE  # (96, 72)
         self.embed_dim = cfg.MODEL.EMBED_DIM # 384
@@ -246,8 +252,20 @@ class Poseidon(nn.Module):
         # Layer normalization
         self.layer_norm = nn.LayerNorm([self.embed_dim, 24, 18])
 
+        # load pretrained weights if available cfg.MODEL.PRETRAINED
+        if hasattr(cfg.MODEL, 'PRETRAINED') and cfg.MODEL.PRETRAINED:
+            pretrained_path = cfg.MODEL.PRETRAINED
+            if os.path.exists(pretrained_path):
+                print(f"Loading pretrained weights from {pretrained_path}")
+                self.load_state_dict(torch.load(pretrained_path, map_location=self.device), strict=False)
+            else:
+                print(f"Pretrained weights not found at {pretrained_path}, using random initialization.")
+
+
+
         # Print learning parameters
-        print(f"Poseidon learnable parameters: {round(self.count_trainable_parameters() / 1e6, 1)} M\n\n")
+        if not self.inference:
+            print(f"Poseidon learnable parameters: {round(self.count_trainable_parameters() / 1e6, 1)} M\n\n")
 
         print(f"Poseidon parameters: {round(self.count_parameters() / 1e6, 1)} M\n\n")
 
@@ -258,7 +276,7 @@ class Poseidon(nn.Module):
         return sum(p.numel() for p in model.parameters())
 
 
-    def forward(self, x, meta=None):
+    def forward(self, x, meta=None, return_weights=False):
         batch_size, num_frames, C, H, W = x.shape
         x = x.view(-1, C, H, W)
 
@@ -280,13 +298,13 @@ class Poseidon(nn.Module):
 
         # Feature Fusion
         x = self.feature_fusion(intermediate_outputs)
-        
+
         # Reshape to separate frames
         x = x.view(batch_size, num_frames, self.embed_dim, 24, 18) # [batch_size, num_frames, 384, 24, 18]  ß
 
         # Adaptive Frame Weighting
         x, frame_weights = self.adaptive_weighting(x)
-        
+
         # Cross-Attention
         center_frame_idx = num_frames // 2
         center_frame = x[:, center_frame_idx]
@@ -298,7 +316,7 @@ class Poseidon(nn.Module):
 
         # Cross-Attention
         attended_features = self.cross_attention(center_frame, context_frames)
-        
+
         # Layer Norm
         attended_features = self.layer_norm(attended_features)
 
@@ -310,7 +328,10 @@ class Poseidon(nn.Module):
 
         # Final layer
         x = self.final_layer(x)
-        
+
+        if return_weights:
+            return x, frame_weights
+
         return x
 
     def set_phase(self, phase):
@@ -343,4 +364,3 @@ class Poseidon(nn.Module):
             norm_factor=np.ones((N, 2), dtype=np.float32))
 
         return avg_acc
-
